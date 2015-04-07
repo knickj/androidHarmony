@@ -19,6 +19,7 @@ android {
 }
 dependencies {
     //compile 'org.igniterealtime.smack:smack-android:4.1.0-rc3'
+    compile 'com.google.android.gms:play-services:7.0.0'
     compile files('lib/asmack-android-19-0.8.10.jar')
     compile('org.apache.httpcomponents:httpclient-android:4.3.5.1')
     compile('com.googlecode.json-simple:json-simple:1.1.1'){

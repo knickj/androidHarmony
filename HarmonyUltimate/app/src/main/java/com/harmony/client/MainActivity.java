@@ -24,10 +24,21 @@ import android.view.View.OnTouchListener;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.ListAdapter;
 import android.widget.ListView;
 
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.wearable.DataApi;
+import com.google.android.gms.wearable.DataMap;
+import com.google.android.gms.wearable.MessageApi;
+import com.google.android.gms.wearable.Node;
+import com.google.android.gms.wearable.NodeApi;
+import com.google.android.gms.wearable.PutDataMapRequest;
+import com.google.android.gms.wearable.PutDataRequest;
+import com.google.android.gms.wearable.Wearable;
 import com.harmony.api.Authentication;
 import com.harmony.api.Client;
 import com.harmony.api.Client.HarmonyActivity;
@@ -37,7 +48,9 @@ import com.harmony.api.ClientBase.onCommandTaskFinishedListener;
 import com.logitech.harmonyultimate.R;
 
 public class MainActivity extends Activity implements OnClickListener, OnTouchListener, HubClientSessionLoggedInListener, onCommandTaskFinishedListener,
-        ConnectionListener {
+        ConnectionListener,
+        GoogleApiClient.ConnectionCallbacks,
+        GoogleApiClient.OnConnectionFailedListener{
 
     private static final String        TAG               = "MainActivity";
 
@@ -46,11 +59,19 @@ public class MainActivity extends Activity implements OnClickListener, OnTouchLi
     private ArrayList<HarmonyActivity> activityList      = new ArrayList<HarmonyActivity>();
     private ArrayList<HarmonyDevice>   deviceList        = new ArrayList<HarmonyDevice>();
     private String                     currentActivityId = "";
+    GoogleApiClient googleClient;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.home_layout);
+
+        // Build a new GoogleApiClient
+        googleClient = new GoogleApiClient.Builder(this)
+                .addApi(Wearable.API)
+                .addConnectionCallbacks(this)
+                .addOnConnectionFailedListener(this)
+                .build();
 
         Button volUpBtn = (Button) findViewById(R.id.volumeUpButton);
         Button volDownBtn = (Button) findViewById(R.id.volumeDownButton);
@@ -153,13 +174,18 @@ public class MainActivity extends Activity implements OnClickListener, OnTouchLi
             case R.id.connectButton:
                 disableCommandButtons();
                 logInToClient();
+                DataMap dataMap = new DataMap();
+                for(HarmonyActivity ha:activityList) {
+                    dataMap.putString(ha.toString(),ha.getActivityId());
+                }
+                new SendToDataLayerThread("/activities", dataMap).start();
                 break;
             case R.id.disconnectButton:
                 //TODO - add ability to disconnect the GuestSessionTokenTask if it is stuck on trying to connect
                 connectionClosed();
                 break;
             case R.id.getConfigButton:
-                hubCommandsClient.sendGetConfigurationCommandToHub(this);
+                //hubCommandsClient.sendGetConfigurationCommandToHub(this);
                 break;
             case R.id.refreshConfigButton:
                 refreshConfigurationFromString(readFromFile("config.txt"));
@@ -252,15 +278,18 @@ public class MainActivity extends Activity implements OnClickListener, OnTouchLi
         SmackAndroid.init(this);
 
         //if on home wifi then use the home wifi IP and port, otherwise use the external ones
-        String hubIP = Configuration.hubWifiAddress;
+        EditText ipEditText =(EditText)findViewById(R.id.ipEditText);
+        String hubIP = ipEditText.getText().toString();
         int xmppPort = Configuration.hubWifiXmppPort;
         WifiManager wifiMgr = (WifiManager) getSystemService(Context.WIFI_SERVICE);
         WifiInfo mWifi = wifiMgr.getConnectionInfo();
         String wifiName = mWifi.getSSID();
-        if (wifiName == null || !wifiName.equals(Configuration.homeWifiSSID)) {
+        Log.i(TAG,"WIFI FOUND: "+wifiName);
+        /*if (wifiName == null || !wifiName.equals(Configuration.homeWifiSSID)) {
+            Log.i(TAG,"THIS SHOULDNT HAPPEN");
             hubIP = Configuration.hubInternetAddress;
             xmppPort = Configuration.hubInternetXmppPort;
-        }
+        }*/
 
         hubCommandsClient = new Client(hubIP, xmppPort, this, this);
         //if (!auth.getSessionToken(loginToken, "192.168.2.128", hubCommandsClient)) {
@@ -354,6 +383,9 @@ public class MainActivity extends Activity implements OnClickListener, OnTouchLi
     }
 
     @Override
+    public void onConnectionFailed(ConnectionResult connectionResult) { }
+
+    @Override
     public void reconnectionSuccessful() {
     }
 
@@ -418,5 +450,65 @@ public class MainActivity extends Activity implements OnClickListener, OnTouchLi
         }
 
         return sb.toString();
+    }
+
+    // Send a message when the data layer connection is successful.
+    @Override
+    public void onConnected(Bundle connectionHint) {
+        String message = "Hello wearable\n Via the data layer";
+        //Requires a new thread to avoid blocking the UI
+        DataMap dataMap = new DataMap();
+        dataMap.putString("message", message);
+
+        new SendToDataLayerThread("/message_path", dataMap).start();
+    }
+
+    // Connect to the data layer when the Activity starts
+    @Override
+    protected void onStart() {
+        super.onStart();
+        googleClient.connect();
+    }
+
+    // Disconnect from the data layer when the Activity stops
+    @Override
+    protected void onStop() {
+        if (null != googleClient && googleClient.isConnected()) {
+            googleClient.disconnect();
+        }
+        super.onStop();
+    }
+
+    // Placeholders for required connection callbacks
+    @Override
+    public void onConnectionSuspended(int cause) { }
+
+    class SendToDataLayerThread extends Thread {
+        String path;
+        DataMap dataMap;
+
+        // Constructor for sending data objects to the data layer
+        SendToDataLayerThread(String p, DataMap data) {
+            path = p;
+            dataMap = data;
+        }
+
+        public void run() {
+            NodeApi.GetConnectedNodesResult nodes = Wearable.NodeApi.getConnectedNodes(googleClient).await();
+            for (Node node : nodes.getNodes()) {
+
+                // Construct a DataRequest and send over the data layer
+                PutDataMapRequest putDMR = PutDataMapRequest.create(path);
+                putDMR.getDataMap().putAll(dataMap);
+                PutDataRequest request = putDMR.asPutDataRequest();
+                DataApi.DataItemResult result = Wearable.DataApi.putDataItem(googleClient, request).await();
+                if (result.getStatus().isSuccess()) {
+                    Log.v("myTag", "DataMap: " + dataMap + " sent to: " + node.getDisplayName());
+                } else {
+                    // Log an error
+                    Log.v("myTag", "ERROR: failed to send DataMap");
+                }
+            }
+        }
     }
 }

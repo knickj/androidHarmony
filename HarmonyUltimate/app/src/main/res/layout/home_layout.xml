@@ -95,6 +95,7 @@
         android:src="@drawable/disconnect"
         android:scaleType="centerCrop" />
 
+
     <ListView
         android:id="@+id/activitylistView"
         android:choiceMode="singleChoice"
@@ -107,6 +108,15 @@
         android:layout_marginRight="16dp" >
 
     </ListView>
- 
+
+    <EditText
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:id="@+id/ipEditText"
+        android:layout_alignTop="@+id/disconnectButton"
+        android:layout_alignEnd="@+id/activitylistView"
+        android:layout_toEndOf="@+id/disconnectButton"
+        android:layout_toRightOf="@+id/disconnectButton" />
+
 </RelativeLayout>
 
